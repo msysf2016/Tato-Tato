@@ -1,0 +1,2000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>土豆兄弟 · 网页版 (树 + 自动模式 + 三 Boss)</title>
+<style>
+  * { box-sizing: border-box; user-select: none; }
+  body {
+    margin: 0; min-height: 100vh; background: #1a2a32;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Courier New', Courier, monospace; overflow: hidden;
+  }
+  .game-wrapper { background: #0f1a1f; padding: 20px; border-radius: 32px; box-shadow: 0 20px 30px rgba(0,0,0,0.7); }
+  canvas { display: block; margin: 0 auto; width: 800px; height: 600px; border-radius: 20px; cursor: default; box-shadow: inset 0 0 20px #00000066; }
+  .hud { display: flex; justify-content: space-between; align-items: center; padding: 10px 10px 0 10px; color: #b7e4c7; text-shadow: 2px 2px 0 #0a1215; font-weight: bold; font-size: 20px; letter-spacing: 1px; }
+  .hp-bar { width: 200px; height: 16px; background: #2d3e46; border-radius: 20px; overflow: hidden; border: 2px solid #3f5a66; }
+  .hp-fill { height: 100%; width: 100%; background: #dc2f2f; transition: width 0.1s; }
+  .restart-btn {
+    background: #386b5e; border: none; color: white; font-weight: bold; font-size: 16px;
+    padding: 6px 18px; border-radius: 40px; cursor: pointer; box-shadow: 0 5px 0 #1d3a32;
+    transition: 0.05s linear; font-family: inherit;
+  }
+  .restart-btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #1d3a32; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; }
+  .stats span { color: #f2e8cf; background: #1f343c; padding: 4px 10px; border-radius: 30px; box-shadow: inset 0 2px 5px #00000055; white-space: nowrap; font-size: 14px; }
+  .controls-hint { text-align: center; color: #7a9aa8; font-size: 14px; margin-top: 8px; letter-spacing: 1px; }
+  .controls-hint kbd { background: #2d3e46; color: #e0e7e9; padding: 2px 8px; border-radius: 6px; font-weight: bold; margin: 0 2px; }
+  .damage-badge { background: #5e2e2e !important; color: #ffb7b7 !important; }
+  .enemy-badge { background: #3a3a3a !important; color: #cccccc !important; }
+  .boss-badge { background: #5e1e1e !important; color: #ff9999 !important; }
+  .debuff-badge { background: #4a2e2e !important; color: #ffaaaa !important; }
+  .auto-badge { background: #2e4a5e !important; color: #b7d9ff !important; }
+  .auto-badge.on { background: #2e5e3a !important; color: #b7ffb7 !important; }
+</style>
+</head>
+<body>
+<div>
+  <div class="hud">
+    <div class="stats">
+      <span>❤️ <span id="hpText">100</span>/<span id="maxHpText">100</span></span>
+      <span>💀 <span id="killCount">0</span></span>
+      <span>⏱️ <span id="waveTimer">0.0</span></span>
+      <span>🎯 射程 <span id="rangeValue">200</span></span>
+      <span>⚡ 攻速 <span id="speedValue">10</span></span>
+      <span class="damage-badge">💥 伤害 <span id="damageValue">20</span></span>
+      <span class="debuff-badge" id="debuffBadge" style="display:none;">⬇ 压制 <span id="debuffValue">0</span>%</span>
+      <span>🧲 吸取 <span id="pickupRangeValue">80</span></span>
+      <span>⭐ 积分 <span id="scoreValue">0</span></span>
+      <span>🏆 等级 <span id="levelValue">1</span></span>
+      <span class="enemy-badge">👾 怪物 <span id="enemyCount">0</span></span>
+      <span class="boss-badge" id="bossBadge" style="display:none;">👹 BOSS 战</span>
+      <span class="auto-badge" id="autoBadge">🤖 自动 关</span>
+    </div>
+    <button class="restart-btn" id="restartButton">重开一局</button>
+  </div>
+  <div class="game-wrapper">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+  </div>
+  <div class="hp-bar" style="margin: 12px auto 0; width: 800px;">
+    <div class="hp-fill" id="hpBarFill" style="width: 100%"></div>
+  </div>
+  <div class="controls-hint">
+    <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd> 移动 &nbsp;|&nbsp; 🔫 自动射击 &nbsp;|&nbsp; <kbd>Tab</kbd> 切换自动模式 &nbsp;|&nbsp; 🌳 打树10次掉水果
+  </div>
+</div>
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  const W = 800, H = 600;
+  const PLAYER_RADIUS = 18;
+  const PLAYER_SPEED = 3.8;
+  const BULLET_RADIUS = 6;
+  const BULLET_SPEED = 9;
+  const ENEMY_RADIUS = 16;
+  const ENEMY_SPEED = 1.4;
+  const PLAYER_MAX_HP = 100;
+  const INVINCIBLE_TIME = 0.6;
+  const CONTACT_DAMAGE = 12;
+
+  const BASE_SHOOT_RANGE = 200;
+  const BASE_ATTACK_SPEED = 10;
+  const BASE_PICKUP_RANGE = 80;
+  const BASE_BULLET_DAMAGE = 20;
+  const BULLET_MAX_TRAVEL_OFFSET = 50;
+  const MAX_SHOOT_RANGE = 400;
+
+  const ENEMY_HP_NORMAL = 100;
+  const ENEMY_HP_PURPLE = 300;
+  const ENEMY_SPEED_PURPLE_MULT = 1.5;
+  const PURPLE_SPAWN_CHANCE = 0.05;
+
+  const WORLD_RADIUS = 1500;
+  const WORLD_BOUNDARY_MARGIN = 80;
+
+  const SPAWN_INTERVAL = 1.0;
+  const SPAWN_WARNING_DURATION = 1.0;
+  const MIN_SPAWN_INTERVAL = 0.5;
+  const MAX_ENEMIES = 35;
+
+  const BOSS_TRIGGER_INTERVAL = 100;
+  const BOSS_MAX_HP = 2500;
+  const BOSS_RADIUS = 55;
+  const BOSS_SPEED = 0.8;
+  const BOSS_CONTACT_DAMAGE = 25;
+  const BOSS_SPAWN_DIST = 520;
+  const BOSS_TIME_SPAWN_MULT = 2.5;
+
+  const BOSS_DEBUFF_BASE = 0.10;
+  const BOSS_DEBUFF_STEP = 0.05;
+  const BOSS_DEBUFF_MAX = 0.80;
+
+  const PICKUP_RADIUS = 6;
+  const PICKUP_LIFETIME = 15;
+  const PICKUP_SCORE = 1;
+  const PICKUP_SCORE_PURPLE = 3;
+  const PICKUP_ATTRACT_SPEED = 320;
+
+  const FRUIT_DROP_CHANCE = 0.01;
+  const FRUIT_RADIUS = 18;
+  const FRUIT_HEAL_AMOUNT = 10;
+  const FRUIT_MAXHP_AMOUNT = 5;
+
+  const SCORE_PER_LEVEL = 20;
+  const LEVEL_UP_ATTACK_SPEED = 3;
+  const LEVEL_UP_RANGE = 10;
+  const LEVEL_UP_PICKUP_RANGE = 5;
+  const LEVEL_UP_DAMAGE = 3;
+  const LEVEL_UP_HEAL = 5;
+  const MAX_ATTACK_SPEED = 200;
+
+  const CULL_MARGIN = 120;
+  const DECOR_GRID = 140;
+  const DECOR_PER_CELL = 0.6;
+
+  const TREE_SPAWN_CHANCE = 0.03;
+  const TREE_WARNING_DURATION = 1.5;
+  const TREE_RADIUS = 30;
+  const TREE_HITS_TO_FRUIT = 10;
+  const TREE_MAX_HP = 10;
+
+  const AUTO_DANGER_DIST = 130;
+
+  // ---------- 图片 ----------
+  const playerImg = new Image();
+  playerImg.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0NSIgZmlsbD0iI2ZmZmZmZiIgc3Ryb2tlPSIjMDAwMDAwIiBzdHJva2Utd2lkdGg9IjgiLz48cGF0aCBkPSJNMzAgNDAgTDUwIDUwIEw3MCA0MCIgc3Ryb2tlPSIjMDAwMDAwIiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIgZmlsbD0ibm9uZSIvPjxjaXJjbGUgY3g9IjM4IiBjeT0iNTUiIHI9IjUiIGZpbGw9IiMwMDAwMDAiLz48Y2lyY2xlIGN4PSI2MiIgY3k9IjU1IiByPSI1IiBmaWxsPSIjMDAwMDAwIi8+PHBhdGggZD0iTTQwIDcyIEw2MCA3MiIgc3Ryb2tlPSIjMDAwMDAwIiBzdHJva2Utd2lkdGg9IjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjwvc3ZnPg==';
+  let playerImgLoaded = false;
+  playerImg.onload = () => { playerImgLoaded = true; };
+
+  const fruitImg = new Image();
+  fruitImg.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cGF0aCBkPSJNMzAgMjAgUTUwIDAgNzAgMjAgUTgwIDUwIDcwIDgwIFE1MCA5NSAzMCA4MCBRMjAgNTAgMzAgMjBaIiBmaWxsPSIjYTVhZTVhIiBzdHJva2U9IiMyYzJjMWUiIHN0cm9rZS13aWR0aD0iNSIvPjxwYXRoIGQ9Ik01MCAyMCBRNDggOCA1NSAyIFE2MCAxMCA1OCAyMCBaIiBmaWxsPSIjNGEzYTVhIiBzdHJva2U9IiMyYzJjMWUiIHN0cm9rZS13aWR0aD0iMyIvPjxjaXJjbGUgY3g9IjQwIiBjeT0iNDAiIHI9IjUiIGZpbGw9IiMyYzJjMWUiLz48Y2lyY2xlIGN4PSI2MCIgY3k9IjQ1IiByPSI0IiBmaWxsPSIjMmMyYzFlIi8+PGNpcmNsZSBjeD0iNDUiIGN5PSI2NSIgcj0iNCIgZmlsbD0iIzJjMmMxZSIvPjxjaXJjbGUgY3g9IjY1IiBjeT0iNzAiIHI9IjMiIGZpbGw9IiMyYzJjMWUiLz48L3N2Zz4=';
+  let fruitImgLoaded = false;
+  fruitImg.onload = () => { fruitImgLoaded = true; };
+
+  const enemyImg = new Image();
+  enemyImg.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cGF0aCBkPSJNMjAgNzAgUTEwIDYwIDE1IDQwIFEyMCAyMCA0MCAxNSBRNTAgMTAgNjAgMTUgUTgwIDIwIDg1IDQwIFE5MCA2MCA4MCA3MCBRNzUgODAgNTAgODAgUTI1IDgwIDIwIDcwWiIgZmlsbD0iIzZiNTU4YyIgc3Ryb2tlPSIjMjAxODJhIiBzdHJva2Utd2lkdGg9IjQiLz48ZWxsaXBzZSBjeD0iNTUiIGN5PSI0NSIgcng9IjE0IiByeT0iMTYiIGZpbGw9IiMwMDAwMDAiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjM4IiByPSI1IiBmaWxsPSIjZmZmZmZmIi8+PHBhdGggZD0iTTI1IDI1IFEyMCAxMCAzMCAxMCBRMzUgMTUgMzAgMjBaIiBmaWxsPSIjNmI1NThjIiBzdHJva2U9IiMyMDE4MmEiIHN0cm9rZS13aWR0aD0iMyIvPjxjaXJjbGUgY3g9IjI4IiBjeT0iMTIiIHI9IjUiIGZpbGw9IiMwMDAwMDAiLz48cGF0aCBkPSJNNzAgMjAgUTc1IDggODAgMTUgUTgwIDIyIDc1IDI1WiIgZmlsbD0iIzZiNTU4YyIgc3Ryb2tlPSIjMjAxODJhIiBzdHJva2Utd2lkdGg9IjMiLz48Y2lyY2xlIGN4PSI3OCIgY3k9IjE1IiByPSI0IiBmaWxsPSIjMDAwMDAwIi8+PC9zdmc+';
+  let enemyImgLoaded = false;
+  enemyImg.onload = () => { enemyImgLoaded = true; };
+
+  let player = { x: 0, y: 0, hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, invincible: 0 };
+  let bullets = [];
+  let enemies = [];
+  let spawnWarnings = [];
+  let pickups = [];
+  let fruits = [];
+  let bosses = [];
+  let bossWarnings = [];
+  let trees = [];
+  let treeWarnings = [];
+  let lastBossTriggerKills = 0;
+
+  let kills = 0;
+  let score = 0;
+  let level = 1;
+
+  let currentAttackSpeed = BASE_ATTACK_SPEED;
+  let currentShootRange = BASE_SHOOT_RANGE;
+  let currentPickupRange = BASE_PICKUP_RANGE;
+  let currentBulletDamage = BASE_BULLET_DAMAGE;
+  let shootCooldown = 0;
+
+  let bossDebuffCount = 0;
+  let currentDamageMultiplier = 1.0;
+
+  let levelUpFlash = 0;
+  let fruitPickupFlash = 0;
+  let fruitPickupText = '';
+  let fruitPickupColor = '#ffdd66';
+  let bossDefeatFlash = 0;
+  let debuffFlash = 0;
+  let treeRewardFlash = 0;
+
+  let gameTime = 0;
+  let spawnTimer = 0;
+  let gameOver = false;
+  let aimAngle = 0;
+
+  let autoMode = false;
+  let autoMoveX = 0;
+  let autoMoveY = 0;
+
+  function getCameraOffset() { return { x: player.x - W / 2, y: player.y - H / 2 }; }
+  function worldToScreen(wx, wy) { const cam = getCameraOffset(); return { x: wx - cam.x, y: wy - cam.y }; }
+  function distance(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+  function isVisible(wx, wy, margin) {
+    const cam = getCameraOffset();
+    const sx = wx - cam.x;
+    const sy = wy - cam.y;
+    return sx > -margin && sx < W + margin && sy > -margin && sy < H + margin;
+  }
+  function seededRandom(x, y, seed) {
+    const n = Math.sin(x * 12.9898 + y * 78.233 + seed * 43758.5453) * 43758.5453;
+    return n - Math.floor(n);
+  }
+  function clampToWorld(x, y, margin) {
+    const m = margin || 0;
+    const half = WORLD_RADIUS - m;
+    return {
+      x: Math.min(Math.max(x, -half), half),
+      y: Math.min(Math.max(y, -half), half),
+    };
+  }
+
+  function recalcStats() {
+    currentAttackSpeed = Math.min(MAX_ATTACK_SPEED, BASE_ATTACK_SPEED + (level - 1) * LEVEL_UP_ATTACK_SPEED);
+    currentShootRange = Math.min(MAX_SHOOT_RANGE, BASE_SHOOT_RANGE + (level - 1) * LEVEL_UP_RANGE);
+    currentPickupRange = BASE_PICKUP_RANGE + (level - 1) * LEVEL_UP_PICKUP_RANGE;
+    const baseDamage = BASE_BULLET_DAMAGE + (level - 1) * LEVEL_UP_DAMAGE;
+    currentBulletDamage = Math.max(1, Math.floor(baseDamage * currentDamageMultiplier));
+  }
+
+  function updateDamageMultiplier() {
+    if (bossDebuffCount === 0) {
+      currentDamageMultiplier = 1.0;
+    } else {
+      const debuff = BOSS_DEBUFF_BASE + (bossDebuffCount - 1) * BOSS_DEBUFF_STEP;
+      const clamped = Math.min(BOSS_DEBUFF_MAX, debuff);
+      currentDamageMultiplier = 1.0 - clamped;
+    }
+    recalcStats();
+    updateDebuffUI();
+  }
+
+  function updateDebuffUI() {
+    const badge = document.getElementById('debuffBadge');
+    if (bossDebuffCount === 0) {
+      badge.style.display = 'none';
+    } else {
+      badge.style.display = 'inline-block';
+      const debuff = BOSS_DEBUFF_BASE + (bossDebuffCount - 1) * BOSS_DEBUFF_STEP;
+      const clamped = Math.min(BOSS_DEBUFF_MAX, debuff);
+      document.getElementById('debuffValue').innerText = Math.round(clamped * 100);
+    }
+  }
+
+  function updateAutoUI() {
+    const badge = document.getElementById('autoBadge');
+    if (autoMode) {
+      badge.innerText = '🤖 自动 开';
+      badge.className = 'auto-badge on';
+    } else {
+      badge.innerText = '🤖 自动 关';
+      badge.className = 'auto-badge';
+    }
+  }
+
+  function checkLevelUp() {
+    const targetLevel = Math.floor(score / SCORE_PER_LEVEL) + 1;
+    if (targetLevel > level) {
+      const levelsGained = targetLevel - level;
+      for (let i = 0; i < levelsGained; i++) {
+        level += 1;
+        player.hp = Math.min(player.maxHp, player.hp + LEVEL_UP_HEAL);
+      }
+      recalcStats();
+      levelUpFlash = 0.5;
+      updateUI();
+    }
+  }
+
+  function checkBossTrigger() {
+    const nextTrigger = lastBossTriggerKills + BOSS_TRIGGER_INTERVAL;
+    if (kills >= nextTrigger) {
+      let count = 1;
+      if (kills % 200 === 0 && kills >= 200) count = 2;
+      for (let i = 0; i < count; i++) spawnBossWarning(i, count);
+      lastBossTriggerKills = kills;
+      bossDebuffCount += 1;
+      updateDamageMultiplier();
+      debuffFlash = 1.2;
+    }
+  }
+
+  function spawnBossWarning(index, totalCount) {
+    const baseAngle = Math.random() * Math.PI * 2;
+    const angleOffset = (Math.PI * 2) / totalCount;
+    const angle = baseAngle + index * angleOffset;
+    let bx = player.x + Math.cos(angle) * BOSS_SPAWN_DIST;
+    let by = player.y + Math.sin(angle) * BOSS_SPAWN_DIST;
+    const clamped = clampToWorld(bx, by, BOSS_RADIUS + WORLD_BOUNDARY_MARGIN);
+    bx = clamped.x;
+    by = clamped.y;
+    bossWarnings.push({ x: bx, y: by, timer: 2.5, maxTimer: 2.5 });
+    document.getElementById('bossBadge').style.display = 'inline-block';
+  }
+
+  function spawnBossFromWarning(w) {
+    const roll = Math.random();
+    let type;
+    if (roll < 0.34) type = 'slime';
+    else if (roll < 0.67) type = 'red';
+    else type = 'purple';
+    const clamped = clampToWorld(w.x, w.y, BOSS_RADIUS + WORLD_BOUNDARY_MARGIN);
+    bosses.push({
+      x: clamped.x, y: clamped.y,
+      hp: BOSS_MAX_HP, maxHp: BOSS_MAX_HP,
+      radius: BOSS_RADIUS, speed: BOSS_SPEED,
+      contactDamage: BOSS_CONTACT_DAMAGE,
+      type: type,
+    });
+  }
+
+  function handleBossDefeat(boss) {
+    const bx = boss.x, by = boss.y;
+    bossDefeatFlash = 1.5;
+    for (let i = 0; i < 12; i++) {
+      let px = bx + (Math.random() - 0.5) * 80;
+      let py = by + (Math.random() - 0.5) * 80;
+      const clamped = clampToWorld(px, py, PICKUP_RADIUS + 20);
+      spawnPickup(clamped.x, clamped.y, PICKUP_SCORE_PURPLE);
+    }
+    let fx = bx + (Math.random() - 0.5) * 60;
+    let fy = by + (Math.random() - 0.5) * 60;
+    const clampedF = clampToWorld(fx, fy, FRUIT_RADIUS + 20);
+    spawnFruit(clampedF.x, clampedF.y);
+    player.hp = Math.min(player.maxHp, player.hp + 30);
+    if (bosses.length === 0) document.getElementById('bossBadge').style.display = 'none';
+    updateUI();
+  }
+
+  function trySpawnTreeWarning() {
+    if (Math.random() >= TREE_SPAWN_CHANCE) return;
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 200 + Math.random() * 300;
+    let tx = player.x + Math.cos(angle) * dist;
+    let ty = player.y + Math.sin(angle) * dist;
+    const clamped = clampToWorld(tx, ty, TREE_RADIUS + WORLD_BOUNDARY_MARGIN);
+    treeWarnings.push({
+      x: clamped.x, y: clamped.y,
+      timer: TREE_WARNING_DURATION, maxTimer: TREE_WARNING_DURATION,
+    });
+  }
+
+  function spawnTreeFromWarning(w) {
+    trees.push({
+      x: w.x, y: w.y,
+      hp: TREE_MAX_HP, maxHp: TREE_MAX_HP,
+      radius: TREE_RADIUS,
+      hitsTaken: 0,
+      flashTimer: 0,
+      swayPhase: Math.random() * Math.PI * 2,
+    });
+  }
+
+  function createSpawnWarning() {
+    if (enemies.length + spawnWarnings.length >= MAX_ENEMIES) return;
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 150 + Math.random() * 350;
+    let spawnX = player.x + Math.cos(angle) * dist;
+    let spawnY = player.y + Math.sin(angle) * dist;
+    const half = WORLD_RADIUS - ENEMY_RADIUS - 5;
+    spawnX = Math.min(Math.max(spawnX, -half), half);
+    spawnY = Math.min(Math.max(spawnY, -half), half);
+
+    const isPurple = Math.random() < PURPLE_SPAWN_CHANCE;
+    let hp, speed, radius, color;
+    if (isPurple) {
+      hp = ENEMY_HP_PURPLE;
+      speed = ENEMY_SPEED * ENEMY_SPEED_PURPLE_MULT * (0.9 + Math.random() * 0.2);
+      radius = ENEMY_RADIUS * 1.25;
+      color = 'purple';
+    } else {
+      hp = ENEMY_HP_NORMAL;
+      speed = ENEMY_SPEED * (0.8 + Math.random() * 0.6);
+      radius = ENEMY_RADIUS * (0.85 + Math.random() * 0.3);
+      color = 'red';
+    }
+    spawnWarnings.push({
+      x: spawnX, y: spawnY,
+      timer: SPAWN_WARNING_DURATION, maxTimer: SPAWN_WARNING_DURATION,
+      hp, speed, radius, color
+    });
+
+    trySpawnTreeWarning();
+  }
+
+  function spawnEnemyFromWarning(w) {
+    if (enemies.length >= MAX_ENEMIES) return;
+    enemies.push({
+      x: w.x, y: w.y, hp: w.hp, maxHp: w.hp,
+      speed: w.speed, radius: w.radius, color: w.color
+    });
+  }
+
+  function spawnPickup(x, y, value) {
+    const clamped = clampToWorld(x, y, PICKUP_RADIUS + 10);
+    pickups.push({
+      x: clamped.x, y: clamped.y,
+      lifetime: PICKUP_LIFETIME, radius: PICKUP_RADIUS,
+      value: value || PICKUP_SCORE
+    });
+  }
+
+  function spawnFruit(x, y) {
+    const clamped = clampToWorld(x, y, FRUIT_RADIUS + 10);
+    fruits.push({ x: clamped.x, y: clamped.y, radius: FRUIT_RADIUS });
+  }
+
+  function handleEnemyDeath(enemy) {
+    const dropValue = enemy.color === 'purple' ? PICKUP_SCORE_PURPLE : PICKUP_SCORE;
+    spawnPickup(enemy.x, enemy.y, dropValue);
+    if (Math.random() < FRUIT_DROP_CHANCE) spawnFruit(enemy.x, enemy.y);
+  }
+
+  // ---------- 水果效果 (修复: 残血只回血, 满血才加最大生命) ----------
+  // 规则:
+  // 1. 满血 (hp >= maxHp): 必定 +5 最大生命 (当前生命也跟着 +5, 因为上限提高)
+  // 2. 残血: 必定 +10 当前生命 (纯回血, 不加最大生命)
+  function applyFruitEffect() {
+    const isFullHp = player.hp >= player.maxHp;
+
+    if (isFullHp) {
+      // 满血: +5 最大生命
+      player.maxHp += FRUIT_MAXHP_AMOUNT;
+      player.hp = Math.min(player.maxHp, player.hp + FRUIT_MAXHP_AMOUNT);
+      fruitPickupText = '+' + FRUIT_MAXHP_AMOUNT + ' 最大生命!';
+      fruitPickupColor = '#ff7777';
+    } else {
+      // 残血: 纯回血 +10 当前生命
+      player.hp = Math.min(player.maxHp, player.hp + FRUIT_HEAL_AMOUNT);
+      fruitPickupText = '+' + FRUIT_HEAL_AMOUNT + ' 生命!';
+      fruitPickupColor = '#66ff88';
+    }
+    fruitPickupFlash = 0.7;
+    updateUI();
+  }
+
+  function resetGame() {
+    player = { x: 0, y: 0, hp: PLAYER_MAX_HP, maxHp: PLAYER_MAX_HP, invincible: 0 };
+    bullets = [];
+    enemies = [];
+    spawnWarnings = [];
+    pickups = [];
+    fruits = [];
+    bosses = [];
+    bossWarnings = [];
+    trees = [];
+    treeWarnings = [];
+    lastBossTriggerKills = 0;
+    bossDebuffCount = 0;
+    currentDamageMultiplier = 1.0;
+    kills = 0; score = 0; level = 1;
+    currentAttackSpeed = BASE_ATTACK_SPEED;
+    currentShootRange = BASE_SHOOT_RANGE;
+    currentPickupRange = BASE_PICKUP_RANGE;
+    currentBulletDamage = BASE_BULLET_DAMAGE;
+    shootCooldown = 0;
+    levelUpFlash = 0; fruitPickupFlash = 0;
+    fruitPickupText = ''; fruitPickupColor = '#ffdd66';
+    bossDefeatFlash = 0;
+    debuffFlash = 0;
+    treeRewardFlash = 0;
+    gameTime = 0; spawnTimer = 0;
+    gameOver = false; aimAngle = 0;
+    autoMoveX = 0; autoMoveY = 0;
+    document.getElementById('bossBadge').style.display = 'none';
+    document.getElementById('debuffBadge').style.display = 'none';
+    updateUI();
+  }
+
+  function updateUI() {
+    document.getElementById('hpText').innerText = Math.max(0, Math.floor(player.hp));
+    document.getElementById('maxHpText').innerText = Math.floor(player.maxHp);
+    document.getElementById('killCount').innerText = kills;
+    document.getElementById('waveTimer').innerText = gameTime.toFixed(1);
+    document.getElementById('rangeValue').innerText = Math.floor(currentShootRange);
+    document.getElementById('speedValue').innerText = currentAttackSpeed;
+    document.getElementById('damageValue').innerText = currentBulletDamage;
+    document.getElementById('pickupRangeValue').innerText = Math.floor(currentPickupRange);
+    document.getElementById('scoreValue').innerText = score;
+    document.getElementById('levelValue').innerText = level;
+    document.getElementById('enemyCount').innerText = enemies.length;
+    const hpPercent = Math.max(0, (player.hp / player.maxHp) * 100);
+    document.getElementById('hpBarFill').style.width = hpPercent + '%';
+  }
+
+  function findNearestEnemyInRange() {
+    let nearestBoss = null, minBossDist = Infinity;
+    for (let b of bosses) {
+      const d = distance(player.x, player.y, b.x, b.y);
+      if (d <= currentShootRange && d < minBossDist) {
+        minBossDist = d;
+        nearestBoss = b;
+      }
+    }
+
+    let nearestEnemy = null, minEnemyDist = Infinity;
+    for (let e of enemies) {
+      const d = distance(player.x, player.y, e.x, e.y);
+      if (d <= currentShootRange && d < minEnemyDist) {
+        minEnemyDist = d;
+        nearestEnemy = e;
+      }
+    }
+
+    let nearestTree = null, minTreeDist = Infinity;
+    for (let t of trees) {
+      const d = distance(player.x, player.y, t.x, t.y);
+      if (d <= currentShootRange && d < minTreeDist) {
+        minTreeDist = d;
+        nearestTree = t;
+      }
+    }
+
+    let bossDist = nearestBoss ? minBossDist : Infinity;
+    let enemyDist = nearestEnemy ? minEnemyDist : Infinity;
+    let treeDist = nearestTree ? minTreeDist : Infinity;
+
+    const nearestTargetDist = Math.min(bossDist, enemyDist);
+    if (nearestTree && treeDist < nearestTargetDist) {
+      return nearestTree;
+    }
+
+    if (nearestBoss) return nearestBoss;
+    if (nearestEnemy) return nearestEnemy;
+    if (nearestTree) return nearestTree;
+    return null;
+  }
+
+  function shootAtTarget(target) {
+    if (!target || gameOver) return;
+    let dx = target.x - player.x;
+    let dy = target.y - player.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.001) { dx = 1; dy = 0; }
+    else { dx /= len; dy /= len; }
+    aimAngle = Math.atan2(dy, dx);
+    const startX = player.x + dx * (PLAYER_RADIUS + 2);
+    const startY = player.y + dy * (PLAYER_RADIUS + 2);
+    bullets.push({
+      x: startX, y: startY,
+      vx: dx * BULLET_SPEED, vy: dy * BULLET_SPEED,
+      radius: BULLET_RADIUS,
+      traveled: 0,
+      maxTravel: currentShootRange + BULLET_MAX_TRAVEL_OFFSET,
+      damage: currentBulletDamage,
+    });
+  }
+
+  function computeAutoMove() {
+    let ax = 0, ay = 0;
+
+    let nearestEnemyDist = Infinity;
+    let nearestEnemy = null;
+    for (let e of enemies) {
+      const d = distance(player.x, player.y, e.x, e.y);
+      if (d < nearestEnemyDist) {
+        nearestEnemyDist = d;
+        nearestEnemy = e;
+      }
+    }
+    for (let b of bosses) {
+      const d = distance(player.x, player.y, b.x, b.y);
+      if (d < nearestEnemyDist) {
+        nearestEnemyDist = d;
+        nearestEnemy = b;
+      }
+    }
+
+    if (nearestEnemy && nearestEnemyDist < AUTO_DANGER_DIST + PLAYER_RADIUS + nearestEnemy.radius) {
+      const dx = player.x - nearestEnemy.x;
+      const dy = player.y - nearestEnemy.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        ax += (dx / len) * 2.5;
+        ay += (dy / len) * 2.5;
+      }
+    }
+
+    let nearestPickup = null, nearestPickupDist = Infinity;
+    for (let p of pickups) {
+      const d = distance(player.x, player.y, p.x, p.y);
+      if (d < nearestPickupDist) {
+        nearestPickupDist = d;
+        nearestPickup = p;
+      }
+    }
+
+    if (nearestPickup) {
+      const dx = nearestPickup.x - player.x;
+      const dy = nearestPickup.y - player.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        let weight = 1.0;
+        if (nearestPickupDist < currentPickupRange * 0.8) weight = 0.2;
+        ax += (dx / len) * weight;
+        ay += (dy / len) * weight;
+      }
+    }
+
+    let nearestFruit = null, nearestFruitDist = Infinity;
+    for (let f of fruits) {
+      const d = distance(player.x, player.y, f.x, f.y);
+      if (d < nearestFruitDist) {
+        nearestFruitDist = d;
+        nearestFruit = f;
+      }
+    }
+
+    if (nearestFruit) {
+      const dx = nearestFruit.x - player.x;
+      const dy = nearestFruit.y - player.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        let weight = 0;
+        const lowHp = player.hp < player.maxHp * 0.4;
+        if (lowHp && nearestFruitDist < 300) {
+          weight = 1.0;
+        } else if (nearestFruitDist < 100) {
+          weight = 0.5;
+        }
+        if (weight > 0) {
+          ax += (dx / len) * weight;
+          ay += (dy / len) * weight;
+        }
+      }
+    }
+
+    const boundaryDist = WORLD_RADIUS - Math.max(Math.abs(player.x), Math.abs(player.y));
+    if (boundaryDist < 200) {
+      const dx = -player.x;
+      const dy = -player.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        const weight = (1 - boundaryDist / 200) * 2.0;
+        ax += (dx / len) * weight;
+        ay += (dy / len) * weight;
+      }
+    }
+
+    const len = Math.hypot(ax, ay);
+    if (len > 0.001) {
+      autoMoveX = ax / len;
+      autoMoveY = ay / len;
+    } else {
+      autoMoveX = 0;
+      autoMoveY = 0;
+    }
+  }
+
+  function update(dt) {
+    if (gameOver) return;
+    if (levelUpFlash > 0) levelUpFlash = Math.max(0, levelUpFlash - dt);
+    if (fruitPickupFlash > 0) fruitPickupFlash = Math.max(0, fruitPickupFlash - dt);
+    if (bossDefeatFlash > 0) bossDefeatFlash = Math.max(0, bossDefeatFlash - dt);
+    if (debuffFlash > 0) debuffFlash = Math.max(0, debuffFlash - dt);
+    if (treeRewardFlash > 0) treeRewardFlash = Math.max(0, treeRewardFlash - dt);
+
+    for (let t of trees) {
+      if (t.flashTimer > 0) t.flashTimer = Math.max(0, t.flashTimer - dt);
+    }
+
+    gameTime += dt;
+    spawnTimer += dt;
+
+    const bossAlive = bosses.length > 0;
+    const spawnMult = bossAlive ? BOSS_TIME_SPAWN_MULT : 1.0;
+    const baseInterval = Math.max(MIN_SPAWN_INTERVAL, SPAWN_INTERVAL - gameTime * 0.01);
+    const currentSpawnInterval = baseInterval * spawnMult;
+
+    while (spawnTimer >= currentSpawnInterval) {
+      createSpawnWarning();
+      spawnTimer -= currentSpawnInterval;
+    }
+
+    for (let i = bossWarnings.length - 1; i >= 0; i--) {
+      const w = bossWarnings[i];
+      w.timer -= dt;
+      if (w.timer <= 0) {
+        spawnBossFromWarning(w);
+        bossWarnings.splice(i, 1);
+      }
+    }
+
+    for (let i = spawnWarnings.length - 1; i >= 0; i--) {
+      const w = spawnWarnings[i];
+      w.timer -= dt;
+      if (w.timer <= 0) {
+        spawnEnemyFromWarning(w);
+        spawnWarnings.splice(i, 1);
+      }
+    }
+
+    for (let i = treeWarnings.length - 1; i >= 0; i--) {
+      const w = treeWarnings[i];
+      w.timer -= dt;
+      if (w.timer <= 0) {
+        spawnTreeFromWarning(w);
+        treeWarnings.splice(i, 1);
+      }
+    }
+
+    let moveX = 0, moveY = 0;
+    if (autoMode) {
+      computeAutoMove();
+      moveX = autoMoveX;
+      moveY = autoMoveY;
+    } else {
+      if (keys['arrowup']) moveY -= 1;
+      if (keys['arrowdown']) moveY += 1;
+      if (keys['arrowleft']) moveX -= 1;
+      if (keys['arrowright']) moveX += 1;
+    }
+
+    if (moveX !== 0 || moveY !== 0) {
+      const len = Math.hypot(moveX, moveY);
+      moveX = (moveX / len) * PLAYER_SPEED;
+      moveY = (moveY / len) * PLAYER_SPEED;
+    }
+    player.x += moveX;
+    player.y += moveY;
+    const halfWorld = WORLD_RADIUS;
+    player.x = Math.min(Math.max(player.x, -halfWorld), halfWorld);
+    player.y = Math.min(Math.max(player.y, -halfWorld), halfWorld);
+
+    if (player.invincible > 0) player.invincible = Math.max(0, player.invincible - dt);
+
+    if (shootCooldown > 0) shootCooldown = Math.max(0, shootCooldown - dt);
+    if (shootCooldown <= 0 && !gameOver) {
+      const target = findNearestEnemyInRange();
+      if (target) {
+        shootAtTarget(target);
+        shootCooldown = 1 / currentAttackSpeed;
+      }
+    }
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      const step = Math.hypot(b.vx, b.vy);
+      b.x += b.vx;
+      b.y += b.vy;
+      b.traveled += step;
+      if (b.traveled > b.maxTravel || distance(b.x, b.y, player.x, player.y) > currentShootRange + 120) {
+        bullets.splice(i, 1);
+      }
+    }
+
+    for (let e of enemies) {
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0.5) {
+        const move = Math.min(e.speed, dist);
+        e.x += (dx / dist) * move;
+        e.y += (dy / dist) * move;
+      }
+    }
+
+    for (let b of bosses) {
+      const dx = player.x - b.x;
+      const dy = player.y - b.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 0.5) {
+        const move = Math.min(b.speed, dist);
+        b.x += (dx / dist) * move;
+        b.y += (dy / dist) * move;
+      }
+    }
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const bullet = bullets[i];
+      let bulletUsed = false;
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        const dist = distance(bullet.x, bullet.y, enemy.x, enemy.y);
+        if (dist < BULLET_RADIUS + enemy.radius) {
+          enemy.hp -= bullet.damage;
+          bulletUsed = true;
+          if (enemy.hp <= 0) {
+            handleEnemyDeath(enemy);
+            enemies.splice(j, 1);
+            kills += 1;
+            checkBossTrigger();
+            updateUI();
+          }
+          break;
+        }
+      }
+      if (!bulletUsed) {
+        for (let k = bosses.length - 1; k >= 0; k--) {
+          const b = bosses[k];
+          const dist = distance(bullet.x, bullet.y, b.x, b.y);
+          if (dist < BULLET_RADIUS + b.radius) {
+            b.hp -= bullet.damage;
+            bulletUsed = true;
+            if (b.hp <= 0) {
+              handleBossDefeat(b);
+              bosses.splice(k, 1);
+              updateUI();
+            }
+            break;
+          }
+        }
+      }
+      if (!bulletUsed) {
+        for (let k = trees.length - 1; k >= 0; k--) {
+          const t = trees[k];
+          const dist = distance(bullet.x, bullet.y, t.x, t.y);
+          if (dist < BULLET_RADIUS + t.radius) {
+            t.hitsTaken += 1;
+            t.flashTimer = 0.15;
+            bulletUsed = true;
+            if (t.hitsTaken >= TREE_HITS_TO_FRUIT) {
+              spawnFruit(t.x, t.y);
+              treeRewardFlash = 1.0;
+              trees.splice(k, 1);
+            }
+            break;
+          }
+        }
+      }
+      if (bulletUsed) bullets.splice(i, 1);
+    }
+
+    for (let i = pickups.length - 1; i >= 0; i--) {
+      const p = pickups[i];
+      p.lifetime -= dt;
+      if (p.lifetime <= 0) { pickups.splice(i, 1); continue; }
+      const distToPlayer = distance(player.x, player.y, p.x, p.y);
+      if (distToPlayer < currentPickupRange && distToPlayer > 0.001) {
+        const dirX = (player.x - p.x) / distToPlayer;
+        const dirY = (player.y - p.y) / distToPlayer;
+        const move = PICKUP_ATTRACT_SPEED * dt;
+        const step = Math.min(move, distToPlayer);
+        p.x += dirX * step;
+        p.y += dirY * step;
+      }
+      if (distToPlayer < PLAYER_RADIUS + PICKUP_RADIUS) {
+        score += p.value;
+        pickups.splice(i, 1);
+        checkLevelUp();
+        updateUI();
+      }
+    }
+
+    const canBeAttracted = player.hp < 100;
+    for (let i = fruits.length - 1; i >= 0; i--) {
+      const f = fruits[i];
+      const distToPlayer = distance(player.x, player.y, f.x, f.y);
+      if (canBeAttracted && distToPlayer < currentPickupRange && distToPlayer > 0.001) {
+        const dirX = (player.x - f.x) / distToPlayer;
+        const dirY = (player.y - f.y) / distToPlayer;
+        const move = PICKUP_ATTRACT_SPEED * dt * 1.2;
+        const step = Math.min(move, distToPlayer);
+        f.x += dirX * step;
+        f.y += dirY * step;
+      }
+      if (distToPlayer < PLAYER_RADIUS + FRUIT_RADIUS) {
+        applyFruitEffect();
+        fruits.splice(i, 1);
+        updateUI();
+      }
+    }
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const enemy = enemies[i];
+      const dist = distance(player.x, player.y, enemy.x, enemy.y);
+      const minDist = PLAYER_RADIUS + enemy.radius;
+      if (dist < minDist) {
+        if (player.invincible <= 0 && !gameOver) {
+          player.hp = Math.max(0, player.hp - CONTACT_DAMAGE);
+          player.invincible = INVINCIBLE_TIME;
+          updateUI();
+          if (player.hp <= 0) {
+            gameOver = true;
+            player.hp = 0;
+            updateUI();
+            break;
+          }
+        }
+        if (dist > 0.01) {
+          const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+          const overlap = minDist - dist;
+          enemy.x -= Math.cos(angle) * overlap * 0.5;
+          enemy.y -= Math.sin(angle) * overlap * 0.5;
+        }
+      }
+    }
+
+    for (let b of bosses) {
+      if (gameOver) break;
+      const dist = distance(player.x, player.y, b.x, b.y);
+      const minDist = PLAYER_RADIUS + b.radius;
+      if (dist < minDist) {
+        if (player.invincible <= 0) {
+          player.hp = Math.max(0, player.hp - b.contactDamage);
+          player.invincible = INVINCIBLE_TIME;
+          updateUI();
+          if (player.hp <= 0) {
+            gameOver = true;
+            player.hp = 0;
+            updateUI();
+          }
+        }
+        if (dist > 0.01) {
+          const angle = Math.atan2(player.y - b.y, player.x - b.x);
+          const overlap = minDist - dist;
+          b.x -= Math.cos(angle) * overlap * 0.3;
+          b.y -= Math.sin(angle) * overlap * 0.3;
+        }
+      }
+    }
+
+    for (let t of trees) {
+      const dist = distance(player.x, player.y, t.x, t.y);
+      const minDist = PLAYER_RADIUS + t.radius * 0.6;
+      if (dist < minDist && dist > 0.01) {
+        const angle = Math.atan2(player.y - t.y, player.x - t.x);
+        const overlap = minDist - dist;
+        player.x += Math.cos(angle) * overlap;
+        player.y += Math.sin(angle) * overlap;
+      }
+    }
+
+    if (player.hp <= 0 && !gameOver) {
+      gameOver = true;
+      player.hp = 0;
+      updateUI();
+    }
+
+    document.getElementById('waveTimer').innerText = gameTime.toFixed(1);
+  }
+
+  function drawGroundDecor() {
+    const cam = getCameraOffset();
+    const leftWorld = cam.x - DECOR_GRID;
+    const rightWorld = cam.x + W + DECOR_GRID;
+    const topWorld = cam.y - DECOR_GRID;
+    const bottomWorld = cam.y + H + DECOR_GRID;
+    const startCol = Math.floor(leftWorld / DECOR_GRID);
+    const endCol = Math.ceil(rightWorld / DECOR_GRID);
+    const startRow = Math.floor(topWorld / DECOR_GRID);
+    const endRow = Math.ceil(bottomWorld / DECOR_GRID);
+
+    for (let col = startCol; col <= endCol; col++) {
+      for (let row = startRow; row <= endRow; row++) {
+        const cellSeed = seededRandom(col, row, 0);
+        if (cellSeed > DECOR_PER_CELL) continue;
+        const typeSeed = seededRandom(col, row, 1);
+        const offsetX = seededRandom(col, row, 2) * DECOR_GRID * 0.8 + DECOR_GRID * 0.1;
+        const offsetY = seededRandom(col, row, 3) * DECOR_GRID * 0.8 + DECOR_GRID * 0.1;
+        const worldX = col * DECOR_GRID + offsetX;
+        const worldY = row * DECOR_GRID + offsetY;
+        if (Math.abs(worldX) > WORLD_RADIUS || Math.abs(worldY) > WORLD_RADIUS) continue;
+        const screenX = worldX - cam.x;
+        const screenY = worldY - cam.y;
+        const scale = 0.7 + seededRandom(col, row, 4) * 0.6;
+        if (typeSeed < 0.6) drawRock(screenX, screenY, scale, col, row);
+        else drawBush(screenX, screenY, scale, col, row);
+      }
+    }
+  }
+
+  function drawRock(sx, sy, scale, col, row) {
+    const baseW = 22 * scale, baseH = 10 * scale;
+    ctx.fillStyle = 'rgba(15, 25, 30, 0.55)';
+    ctx.beginPath();
+    ctx.ellipse(sx + 1, sy + 2, baseW * 0.9, baseH * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(35, 50, 48, 0.85)';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, baseW, baseH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(70, 90, 75, 0.5)';
+    ctx.beginPath();
+    ctx.ellipse(sx - baseW * 0.15, sy - baseH * 0.2, baseW * 0.5, baseH * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (seededRandom(col, row, 5) > 0.4) {
+      ctx.fillStyle = 'rgba(45, 62, 55, 0.9)';
+      ctx.beginPath();
+      ctx.ellipse(sx + baseW * 0.25, sy - baseH * 0.8, baseW * 0.35, baseH * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (seededRandom(col, row, 6) > 0.6) {
+      ctx.fillStyle = 'rgba(40, 58, 52, 0.85)';
+      ctx.beginPath();
+      ctx.ellipse(sx - baseW * 0.35, sy - baseH * 0.5, baseW * 0.28, baseH * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(10, 20, 20, 0.5)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, baseW, baseH, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function drawBush(sx, sy, scale, col, row) {
+    const blades = 3 + Math.floor(seededRandom(col, row, 7) * 3);
+    for (let i = 0; i < blades; i++) {
+      const angleSeed = seededRandom(col + i * 7, row + i * 13, 8);
+      const lenSeed = seededRandom(col + i * 11, row + i * 5, 9);
+      const leanSeed = seededRandom(col + i * 3, row + i * 17, 10);
+      const angle = (angleSeed - 0.5) * 0.9;
+      const length = (6 + lenSeed * 8) * scale;
+      const lean = (leanSeed - 0.5) * 5 * scale;
+      const baseX = sx + (i - blades / 2) * 3 * scale;
+      const baseY = sy + 2;
+      ctx.strokeStyle = 'rgba(45, 65, 50, 0.65)';
+      ctx.lineWidth = 1.5 * scale;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.quadraticCurveTo(
+        baseX + Math.sin(angle) * length * 0.5 + lean * 0.5,
+        baseY - length * 0.6,
+        baseX + Math.sin(angle) * length + lean,
+        baseY - length
+      );
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(15, 25, 20, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + 3, 8 * scale, 2.5 * scale, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawTrees() {
+    for (let w of treeWarnings) {
+      if (!isVisible(w.x, w.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(w.x, w.y);
+      const progress = 1 - w.timer / w.maxTimer;
+      const alpha = 0.4 + progress * 0.6;
+      const size = TREE_RADIUS * (0.8 + progress * 0.4);
+
+      ctx.save();
+      ctx.translate(screen.x, screen.y);
+      ctx.strokeStyle = `rgba(60, 220, 60, ${alpha})`;
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.rotate(progress * Math.PI * 0.5);
+
+      ctx.beginPath();
+      ctx.moveTo(-size, -size);
+      ctx.lineTo(size, size);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(size, -size);
+      ctx.lineTo(-size, size);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(140, 255, 140, ${alpha})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.6, -size * 0.6);
+      ctx.lineTo(size * 0.6, size * 0.6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(size * 0.6, -size * 0.6);
+      ctx.lineTo(-size * 0.6, size * 0.6);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    for (let t of trees) {
+      if (!isVisible(t.x, t.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(t.x, t.y);
+      const r = TREE_RADIUS;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.beginPath();
+      ctx.ellipse(screen.x, screen.y + r * 0.6, r * 0.9, r * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const sway = Math.sin(gameTime * 1.2 + t.swayPhase) * 2;
+
+      ctx.fillStyle = '#5a3a20';
+      ctx.beginPath();
+      ctx.moveTo(screen.x - r * 0.15, screen.y + r * 0.5);
+      ctx.lineTo(screen.x - r * 0.1, screen.y - r * 0.2);
+      ctx.lineTo(screen.x + r * 0.1, screen.y - r * 0.2);
+      ctx.lineTo(screen.x + r * 0.15, screen.y + r * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#2a1a08';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      const canopyY = screen.y - r * 0.6;
+      const canopyR = r * 0.95;
+
+      ctx.fillStyle = '#1e3a1e';
+      ctx.beginPath();
+      ctx.arc(screen.x + sway, canopyY, canopyR, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#2e5e2e';
+      ctx.beginPath();
+      ctx.arc(screen.x + sway, canopyY, canopyR * 0.92, 0, Math.PI * 2);
+      ctx.fill();
+
+      const lightGrad = ctx.createRadialGradient(
+        screen.x + sway - canopyR * 0.35, canopyY - canopyR * 0.35, canopyR * 0.1,
+        screen.x + sway, canopyY, canopyR
+      );
+      lightGrad.addColorStop(0, 'rgba(120, 200, 100, 0.6)');
+      lightGrad.addColorStop(0.5, 'rgba(70, 150, 70, 0.3)');
+      lightGrad.addColorStop(1, 'rgba(30, 70, 30, 0)');
+      ctx.fillStyle = lightGrad;
+      ctx.beginPath();
+      ctx.arc(screen.x + sway, canopyY, canopyR * 0.92, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2 + t.swayPhase;
+        const dotX = screen.x + sway + Math.cos(angle) * canopyR * 0.5;
+        const dotY = canopyY + Math.sin(angle) * canopyR * 0.5;
+        ctx.fillStyle = 'rgba(150, 220, 130, 0.4)';
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, canopyR * 0.15, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (t.flashTimer > 0) {
+        const flashAlpha = t.flashTimer / 0.15;
+        ctx.strokeStyle = `rgba(255, 255, 100, ${flashAlpha * 0.9})`;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(screen.x, canopyY, canopyR * 1.1, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      const hpRatio = 1 - t.hitsTaken / TREE_HITS_TO_FRUIT;
+      if (hpRatio < 1) {
+        const barW = r * 1.8;
+        const barH = 5;
+        const barX = screen.x - barW / 2;
+        const barY = canopyY - canopyR - 12;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(barX, barY, barW, barH);
+        ctx.fillStyle = hpRatio > 0.6 ? '#5ec450' : (hpRatio > 0.3 ? '#ffa040' : '#e63946');
+        ctx.fillRect(barX, barY, barW * hpRatio, barH);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.lineWidth = 1;
+        for (let s = 1; s < TREE_HITS_TO_FRUIT; s++) {
+          const segX = barX + (barW / TREE_HITS_TO_FRUIT) * s;
+          ctx.beginPath();
+          ctx.moveTo(segX, barY);
+          ctx.lineTo(segX, barY + barH);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function drawBossWarnings() {
+    for (let w of bossWarnings) {
+      if (!isVisible(w.x, w.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(w.x, w.y);
+      const progress = w.timer / w.maxTimer;
+      const alpha = 0.4 + (1 - progress) * 0.6;
+      const pulseScale = 1 + Math.sin(gameTime * 12) * 0.08;
+      const outerRadius = BOSS_RADIUS * (2.2 + progress * 1.5) * pulseScale;
+      const innerRadius = BOSS_RADIUS * (1.5 + progress * 1.0) * pulseScale;
+
+      const glowGrad = ctx.createRadialGradient(screen.x, screen.y, innerRadius * 0.5, screen.x, screen.y, outerRadius);
+      glowGrad.addColorStop(0, `rgba(255, 30, 30, ${alpha * 0.5})`);
+      glowGrad.addColorStop(0.6, `rgba(220, 0, 0, ${alpha * 0.3})`);
+      glowGrad.addColorStop(1, `rgba(150, 0, 0, 0)`);
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, outerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = glowGrad;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, outerRadius * 0.85, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 40, 40, ${alpha})`;
+      ctx.lineWidth = 8;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, innerRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 80, 80, ${alpha})`;
+      ctx.lineWidth = 6;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, innerRadius * 0.9, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200, 20, 20, ${alpha * 0.35})`;
+      ctx.fill();
+
+      ctx.font = 'bold 28px "Courier New", monospace';
+      ctx.fillStyle = `rgba(255, 220, 220, ${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚠', screen.x, screen.y);
+      ctx.textBaseline = 'alphabetic';
+    }
+  }
+
+  function drawRedBoss(screen, r) {
+    const t = gameTime;
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2 + t * 0.5;
+      const wave = Math.sin(t * 3 + i * 1.3) * 0.3;
+      const len = r * (1.3 + wave * 0.3);
+      const endX = screen.x + Math.cos(angle) * len;
+      const endY = screen.y + Math.sin(angle) * len;
+      const ctrlX = screen.x + Math.cos(angle) * len * 0.5 + Math.cos(angle + Math.PI / 2) * 10;
+      const ctrlY = screen.y + Math.sin(angle) * len * 0.5 + Math.sin(angle + Math.PI / 2) * 10;
+      ctx.beginPath();
+      ctx.moveTo(screen.x, screen.y);
+      ctx.quadraticCurveTo(ctrlX, ctrlY, endX, endY);
+      ctx.strokeStyle = '#8b1a1a';
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.1, r * 0.95, r * 1.0, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#a02020';
+    ctx.fill();
+    ctx.strokeStyle = '#2a0808';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    const bodyGrad = ctx.createRadialGradient(screen.x - r * 0.3, screen.y - r * 0.4, r * 0.1, screen.x, screen.y, r * 1.2);
+    bodyGrad.addColorStop(0, 'rgba(220, 70, 70, 0.6)');
+    bodyGrad.addColorStop(0.5, 'rgba(160, 30, 30, 0.3)');
+    bodyGrad.addColorStop(1, 'rgba(100, 10, 10, 0)');
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.1, r * 0.9, r * 0.95, 0, 0, Math.PI * 2);
+    ctx.fillStyle = bodyGrad;
+    ctx.fill();
+    const eyes = [{ x: -0.45, y: -0.35 }, { x: 0.45, y: -0.35 }, { x: 0, y: -0.05 }, { x: -0.3, y: 0.15 }, { x: 0.3, y: 0.15 }];
+    for (let ep of eyes) {
+      ctx.beginPath();
+      ctx.arc(screen.x + ep.x * r, screen.y + ep.y * r, r * 0.15, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffdddd';
+      ctx.fill();
+      ctx.strokeStyle = '#2a0808';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(screen.x + ep.x * r, screen.y + ep.y * r, r * 0.08, 0, Math.PI * 2);
+      ctx.fillStyle = '#cc0000';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(screen.x + ep.x * r - r * 0.03, screen.y + ep.y * r - r * 0.03, r * 0.03, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.moveTo(screen.x - r * 0.35, screen.y + r * 0.5);
+    ctx.quadraticCurveTo(screen.x, screen.y + r * 1.0, screen.x + r * 0.35, screen.y + r * 0.5);
+    ctx.strokeStyle = '#2a0808';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    for (let i = 0; i < 4; i++) {
+      const mx = screen.x - r * 0.25 + i * r * 0.17;
+      const my = screen.y + r * 0.6 + (i % 2 === 0 ? r * 0.08 : 0);
+      ctx.beginPath();
+      ctx.moveTo(mx, screen.y + r * 0.55);
+      ctx.lineTo(mx + r * 0.05, my);
+      ctx.lineTo(mx + r * 0.1, screen.y + r * 0.55);
+      ctx.strokeStyle = '#ffdddd';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    for (let i = 0; i < 3; i++) {
+      const dropX = screen.x + (i - 1) * r * 0.4;
+      const dropY = screen.y + r * 0.9 + Math.sin(t * 2 + i) * r * 0.1;
+      ctx.beginPath();
+      ctx.arc(dropX, dropY, r * 0.05, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(180, 20, 20, 0.8)';
+      ctx.fill();
+    }
+  }
+
+  function drawPurpleBoss(screen, r) {
+    const t = gameTime;
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.2, r * 0.9, r * 0.85, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#7b5aa8';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    const bodyGrad = ctx.createRadialGradient(screen.x - r * 0.3, screen.y - r * 0.2, r * 0.1, screen.x, screen.y, r * 1.1);
+    bodyGrad.addColorStop(0, 'rgba(180, 140, 230, 0.7)');
+    bodyGrad.addColorStop(0.5, 'rgba(130, 90, 180, 0.3)');
+    bodyGrad.addColorStop(1, 'rgba(80, 50, 120, 0)');
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.2, r * 0.85, r * 0.8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = bodyGrad;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(screen.x - r * 0.5, screen.y - r * 0.35);
+    ctx.quadraticCurveTo(screen.x - r * 0.65, screen.y - r * 1.3, screen.x - r * 0.15, screen.y - r * 0.55);
+    ctx.closePath();
+    ctx.fillStyle = '#7b5aa8';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(screen.x + r * 0.5, screen.y - r * 0.35);
+    ctx.quadraticCurveTo(screen.x + r * 0.65, screen.y - r * 1.3, screen.x + r * 0.15, screen.y - r * 0.55);
+    ctx.closePath();
+    ctx.fillStyle = '#7b5aa8';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(screen.x, screen.y - r * 0.15, r * 0.42, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    const pX = Math.sin(t * 0.8) * r * 0.08, pY = Math.cos(t * 0.8) * r * 0.08;
+    ctx.beginPath();
+    ctx.arc(screen.x + pX, screen.y - r * 0.15 + pY, r * 0.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a0a2a';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(screen.x + pX - r * 0.08, screen.y - r * 0.15 + pY - r * 0.08, r * 0.07, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(screen.x - r * 0.45, screen.y + r * 0.5);
+    ctx.quadraticCurveTo(screen.x, screen.y + r * 0.95, screen.x + r * 0.45, screen.y + r * 0.5);
+    ctx.closePath();
+    ctx.fillStyle = '#3a1a2a';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    for (let i = 0; i < 6; i++) {
+      const tx = screen.x - r * 0.4 + i * r * 0.16;
+      const ty = screen.y + r * 0.5;
+      const isUpper = i % 2 === 0;
+      ctx.beginPath();
+      if (isUpper) {
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx + r * 0.08, ty + r * 0.18);
+        ctx.lineTo(tx + r * 0.16, ty);
+      } else {
+        ctx.moveTo(tx, ty + r * 0.3);
+        ctx.lineTo(tx + r * 0.08, ty + r * 0.12);
+        ctx.lineTo(tx + r * 0.16, ty + r * 0.3);
+      }
+      ctx.closePath();
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#2a2040';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.65, r * 0.25, r * 0.1, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#cc3333';
+    ctx.fill();
+    for (let i = -1; i <= 1; i++) {
+      const wave = Math.sin(t * 4 + i) * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(screen.x + i * r * 0.3, screen.y + r * 0.9);
+      ctx.quadraticCurveTo(
+        screen.x + i * r * 0.35 + Math.sin(wave) * r * 0.2,
+        screen.y + r * 1.2,
+        screen.x + i * r * 0.3 + Math.sin(wave * 1.5) * r * 0.4,
+        screen.y + r * 1.35
+      );
+      ctx.strokeStyle = '#7b5aa8';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.strokeStyle = '#2a2040';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  function drawSlimeBoss(screen, r) {
+    const t = gameTime;
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.2, r * 0.95, r * 0.85, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#6b58b0';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    const bodyGrad = ctx.createRadialGradient(screen.x - r * 0.3, screen.y - r * 0.1, r * 0.1, screen.x, screen.y, r * 1.1);
+    bodyGrad.addColorStop(0, 'rgba(180, 150, 230, 0.7)');
+    bodyGrad.addColorStop(0.5, 'rgba(120, 90, 180, 0.3)');
+    bodyGrad.addColorStop(1, 'rgba(70, 40, 120, 0)');
+    ctx.beginPath();
+    ctx.ellipse(screen.x, screen.y + r * 0.2, r * 0.9, r * 0.8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = bodyGrad;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(screen.x - r * 0.55, screen.y - r * 0.3);
+    ctx.quadraticCurveTo(screen.x - r * 0.6, screen.y - r * 1.2, screen.x, screen.y - r * 1.3);
+    ctx.quadraticCurveTo(screen.x + r * 0.6, screen.y - r * 1.2, screen.x + r * 0.55, screen.y - r * 0.3);
+    ctx.quadraticCurveTo(screen.x, screen.y - r * 0.55, screen.x - r * 0.55, screen.y - r * 0.3);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(screen.x - r * 0.5, screen.y - r * 0.5);
+    ctx.lineTo(screen.x - r * 0.75, screen.y - r * 1.25);
+    ctx.lineTo(screen.x - r * 0.2, screen.y - r * 0.75);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(screen.x + r * 0.5, screen.y - r * 0.5);
+    ctx.lineTo(screen.x + r * 0.75, screen.y - r * 1.25);
+    ctx.lineTo(screen.x + r * 0.2, screen.y - r * 0.75);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.shadowColor = '#ff3333';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(screen.x - r * 0.28, screen.y - r * 0.4, r * 0.13, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff4444';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(screen.x + r * 0.28, screen.y - r * 0.4, r * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(screen.x - r * 0.28, screen.y - r * 0.4, r * 0.06, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(screen.x + r * 0.28, screen.y - r * 0.4, r * 0.06, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(screen.x - r * 0.35, screen.y - r * 0.05);
+    ctx.lineTo(screen.x - r * 0.25, screen.y + r * 0.1);
+    ctx.lineTo(screen.x - r * 0.15, screen.y - r * 0.05);
+    ctx.lineTo(screen.x - r * 0.05, screen.y + r * 0.1);
+    ctx.lineTo(screen.x + r * 0.05, screen.y - r * 0.05);
+    ctx.lineTo(screen.x + r * 0.15, screen.y + r * 0.1);
+    ctx.lineTo(screen.x + r * 0.25, screen.y - r * 0.05);
+    ctx.lineTo(screen.x + r * 0.35, screen.y + r * 0.1);
+    ctx.strokeStyle = '#2a2040';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    for (let i = -1; i <= 1; i++) {
+      const wave = Math.sin(t * 3 + i * 1.5) * 0.15;
+      ctx.beginPath();
+      ctx.moveTo(screen.x + i * r * 0.35, screen.y + r * 0.9);
+      ctx.quadraticCurveTo(
+        screen.x + i * r * 0.4 + wave * r * 0.3,
+        screen.y + r * 1.15,
+        screen.x + i * r * 0.35 + wave * r * 0.5,
+        screen.y + r * 1.3
+      );
+      ctx.strokeStyle = '#6b58b0';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.strokeStyle = '#2a2040';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  function drawBosses() {
+    for (let b of bosses) {
+      if (!isVisible(b.x, b.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(b.x, b.y);
+      const r = b.radius;
+
+      const glowGrad = ctx.createRadialGradient(screen.x, screen.y, r * 0.5, screen.x, screen.y, r * 1.8);
+      if (b.type === 'red') {
+        glowGrad.addColorStop(0, 'rgba(255, 40, 40, 0.5)');
+        glowGrad.addColorStop(0.6, 'rgba(180, 20, 20, 0.25)');
+        glowGrad.addColorStop(1, 'rgba(120, 0, 0, 0)');
+      } else if (b.type === 'purple') {
+        glowGrad.addColorStop(0, 'rgba(180, 100, 255, 0.5)');
+        glowGrad.addColorStop(0.6, 'rgba(120, 60, 200, 0.25)');
+        glowGrad.addColorStop(1, 'rgba(80, 30, 150, 0)');
+      } else {
+        glowGrad.addColorStop(0, 'rgba(150, 80, 200, 0.5)');
+        glowGrad.addColorStop(0.6, 'rgba(100, 60, 160, 0.25)');
+        glowGrad.addColorStop(1, 'rgba(60, 30, 100, 0)');
+      }
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, r * 1.8, 0, Math.PI * 2);
+      ctx.fillStyle = glowGrad;
+      ctx.fill();
+
+      if (b.type === 'red') drawRedBoss(screen, r);
+      else if (b.type === 'purple') drawPurpleBoss(screen, r);
+      else drawSlimeBoss(screen, r);
+
+      drawBossHealthBar(screen, r, b);
+    }
+    drawBossTotalHealthBar();
+  }
+
+  function drawBossHealthBar(screen, r, b) {
+    const barW = r * 2.2, barH = 8;
+    const barX = screen.x - barW / 2;
+    const barY = screen.y - r - 22;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(barX - 2, barY - 2, barW + 4, barH + 4);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(barX, barY, barW, barH);
+    const hpRatio = Math.max(0, b.hp / b.maxHp);
+    const grad = ctx.createLinearGradient(barX, barY, barX + barW, barY);
+    if (b.type === 'red') {
+      grad.addColorStop(0, '#ff2020'); grad.addColorStop(1, '#aa0000');
+    } else if (b.type === 'purple') {
+      grad.addColorStop(0, '#b060ff'); grad.addColorStop(1, '#6a30a0');
+    } else {
+      grad.addColorStop(0, '#9060e0'); grad.addColorStop(1, '#4a2a80');
+    }
+    ctx.fillStyle = grad;
+    ctx.fillRect(barX, barY, barW * hpRatio, barH);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(barX, barY, barW * hpRatio, barH * 0.4);
+    ctx.strokeStyle = b.type === 'red' ? '#ff5555' : (b.type === 'purple' ? '#c080ff' : '#a080e0');
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(barX, barY, barW, barH);
+  }
+
+  function drawBossTotalHealthBar() {
+    if (bosses.length === 0) return;
+    const barW = 500, barH = 20;
+    const barX = (W - barW) / 2, barY = 80;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(barX - 6, barY - 6, barW + 12, barH + 12);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(barX, barY, barW, barH);
+
+    const segmentW = barW / bosses.length;
+    for (let i = 0; i < bosses.length; i++) {
+      const b = bosses[i];
+      const hpRatio = Math.max(0, b.hp / b.maxHp);
+      const segX = barX + i * segmentW;
+      const grad = ctx.createLinearGradient(segX, barY, segX + segmentW, barY);
+      if (b.type === 'red') {
+        grad.addColorStop(0, '#ff3030'); grad.addColorStop(1, '#aa0000');
+      } else if (b.type === 'purple') {
+        grad.addColorStop(0, '#b060ff'); grad.addColorStop(1, '#6a30a0');
+      } else {
+        grad.addColorStop(0, '#9060e0'); grad.addColorStop(1, '#4a2a80');
+      }
+      ctx.fillStyle = grad;
+      ctx.fillRect(segX, barY, segmentW * hpRatio, barH);
+      if (i > 0) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(segX, barY);
+        ctx.lineTo(segX, barY + barH);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.fillRect(barX, barY, barW, barH * 0.4);
+    ctx.strokeStyle = '#ff8888';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(barX, barY, barW, barH);
+
+    ctx.font = 'bold 18px "Courier New", monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    const totalHp = bosses.reduce((s, b) => s + b.hp, 0);
+    const totalMaxHp = bosses.reduce((s, b) => s + b.maxHp, 0);
+    ctx.fillText('👹 BOSS x' + bosses.length + '  ' + Math.floor(totalHp) + ' / ' + totalMaxHp, W / 2, barY - 10);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const cam = getCameraOffset();
+
+    const worldLeftScreen = -WORLD_RADIUS - cam.x;
+    const worldRightScreen = WORLD_RADIUS - cam.x;
+    const worldTopScreen = -WORLD_RADIUS - cam.y;
+    const worldBottomScreen = WORLD_RADIUS - cam.y;
+
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#0f1a1f';
+    ctx.fillRect(
+      Math.max(0, worldLeftScreen),
+      Math.max(0, worldTopScreen),
+      Math.min(W, worldRightScreen) - Math.max(0, worldLeftScreen),
+      Math.min(H, worldBottomScreen) - Math.max(0, worldTopScreen)
+    );
+
+    drawGroundDecor();
+
+    const step = 50;
+    const leftWorld = Math.max(cam.x, -WORLD_RADIUS);
+    const rightWorld = Math.min(cam.x + W, WORLD_RADIUS);
+    const topWorld = Math.max(cam.y, -WORLD_RADIUS);
+    const bottomWorld = Math.min(cam.y + H, WORLD_RADIUS);
+    const startX = Math.floor(leftWorld / step) * step;
+    const endX = Math.ceil(rightWorld / step) * step;
+    const startY = Math.floor(topWorld / step) * step;
+    const endY = Math.ceil(bottomWorld / step) * step;
+
+    ctx.strokeStyle = '#2f4b5510';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let wx = startX; wx <= endX; wx += step) {
+      const sx = wx - cam.x;
+      const syT = Math.max(0, -WORLD_RADIUS - cam.y);
+      const syB = Math.min(H, WORLD_RADIUS - cam.y);
+      ctx.moveTo(sx, syT);
+      ctx.lineTo(sx, syB);
+    }
+    for (let wy = startY; wy <= endY; wy += step) {
+      const sy = wy - cam.y;
+      const sxL = Math.max(0, -WORLD_RADIUS - cam.x);
+      const sxR = Math.min(W, WORLD_RADIUS - cam.x);
+      ctx.moveTo(sxL, sy);
+      ctx.lineTo(sxR, sy);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = '#7ec8e3';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([15, 10]);
+    ctx.strokeRect(worldLeftScreen, worldTopScreen, worldRightScreen - worldLeftScreen, worldBottomScreen - worldTopScreen);
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#7ec8e355';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(worldLeftScreen, worldTopScreen, worldRightScreen - worldLeftScreen, worldBottomScreen - worldTopScreen);
+
+    const playerScreenX = W / 2;
+    const playerScreenY = H / 2;
+
+    const pickupR = currentPickupRange;
+    const pickupGrad = ctx.createRadialGradient(playerScreenX, playerScreenY, 0, playerScreenX, playerScreenY, pickupR);
+    pickupGrad.addColorStop(0, 'rgba(51, 255, 51, 0)');
+    pickupGrad.addColorStop(0.7, 'rgba(51, 255, 51, 0.02)');
+    pickupGrad.addColorStop(1, 'rgba(51, 255, 51, 0.08)');
+    ctx.beginPath();
+    ctx.arc(playerScreenX, playerScreenY, pickupR, 0, Math.PI * 2);
+    ctx.fillStyle = pickupGrad;
+    ctx.fill();
+
+    const shootR = currentShootRange;
+    const shootGrad = ctx.createRadialGradient(playerScreenX, playerScreenY, 0, playerScreenX, playerScreenY, shootR);
+    shootGrad.addColorStop(0, 'rgba(126, 200, 227, 0)');
+    shootGrad.addColorStop(0.7, 'rgba(126, 200, 227, 0.02)');
+    shootGrad.addColorStop(1, 'rgba(126, 200, 227, 0.07)');
+    ctx.beginPath();
+    ctx.arc(playerScreenX, playerScreenY, shootR, 0, Math.PI * 2);
+    ctx.fillStyle = shootGrad;
+    ctx.fill();
+
+    drawTrees();
+
+    for (let w of spawnWarnings) {
+      if (!isVisible(w.x, w.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(w.x, w.y);
+      const progress = w.timer / w.maxTimer;
+      const ringRadius = w.radius * (1 + progress * 1.5);
+      const alpha = 0.25 + (1 - progress) * 0.6;
+      const isPurple = w.color === 'purple';
+      const r = isPurple ? 180 : 255, g = isPurple ? 80 : 51, b = isPurple ? 255 : 51;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, ringRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      ctx.lineWidth = 3 + (1 - progress) * 3;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, ringRadius * 0.8, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.25})`;
+      ctx.fill();
+    }
+
+    for (let e of enemies) {
+      if (!isVisible(e.x, e.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(e.x, e.y);
+      const distToPlayer = distance(e.x, e.y, player.x, player.y);
+      const inRange = distToPlayer <= currentShootRange;
+      const isPurple = e.color === 'purple';
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.beginPath();
+      ctx.ellipse(screen.x, screen.y + e.radius * 0.7, e.radius * 0.8, e.radius * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (isPurple) {
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, e.radius * 1.25, 0, Math.PI * 2);
+        ctx.fillStyle = inRange ? 'rgba(180, 90, 255, 0.35)' : 'rgba(120, 60, 180, 0.25)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, e.radius, 0, Math.PI * 2);
+        ctx.fillStyle = inRange ? '#b55eff' : '#7a3aa8';
+        ctx.fill();
+        ctx.strokeStyle = '#6a1eaa';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(screen.x - e.radius * 0.5, screen.y - e.radius * 1.1);
+        ctx.lineTo(screen.x, screen.y - e.radius * 1.6);
+        ctx.lineTo(screen.x + e.radius * 0.5, screen.y - e.radius * 1.1);
+        ctx.closePath();
+        ctx.fillStyle = '#ffd700';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(screen.x - e.radius * 0.35, screen.y - e.radius * 0.3, e.radius * 0.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#2a0a2a';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(screen.x + e.radius * 0.35, screen.y - e.radius * 0.3, e.radius * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        if (enemyImgLoaded) {
+          const size = e.radius * 2.4;
+          ctx.globalAlpha = inRange ? 1.0 : 0.65;
+          ctx.drawImage(enemyImg, screen.x - size / 2, screen.y - size / 2, size, size);
+          ctx.globalAlpha = 1.0;
+        } else {
+          ctx.beginPath();
+          ctx.arc(screen.x, screen.y, e.radius, 0, Math.PI * 2);
+          ctx.fillStyle = inRange ? '#7a5a9e' : '#5a3a7e';
+          ctx.fill();
+          ctx.strokeStyle = '#2a1a3a';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      if (e.hp < e.maxHp) {
+        const barWidth = e.radius * 1.8;
+        const barX = screen.x - barWidth / 2;
+        const barY = screen.y - e.radius - (isPurple ? 14 : 8);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(barX, barY, barWidth, 5);
+        const hpRatio = e.hp / e.maxHp;
+        ctx.fillStyle = isPurple ? '#aa44ff' : (hpRatio > 0.6 ? '#4caf50' : (hpRatio > 0.3 ? '#ff9800' : '#e63946'));
+        ctx.fillRect(barX, barY, barWidth * hpRatio, 5);
+      }
+    }
+
+    for (let p of pickups) {
+      if (!isVisible(p.x, p.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(p.x, p.y);
+      const lifeRatio = p.lifetime / PICKUP_LIFETIME;
+      const flicker = lifeRatio < 0.3 ? (Math.floor(p.lifetime * 12) % 2 === 0 ? 1 : 0.4) : 1;
+      const isValuable = p.value > 1;
+      const sizeMult = isValuable ? 1.5 : 1.3;
+      const coreMult = isValuable ? 1.2 : 1.0;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, PICKUP_RADIUS * sizeMult, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${isValuable ? 150 : 51}, 255, ${isValuable ? 150 : 51}, ${0.35 * flicker})`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, PICKUP_RADIUS * coreMult, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${isValuable ? 180 : 100}, 255, ${isValuable ? 180 : 100}, ${flicker})`;
+      ctx.fill();
+    }
+
+    // 水果: 满血时光晕红色, 残血时光晕绿色
+    for (let f of fruits) {
+      if (!isVisible(f.x, f.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(f.x, f.y);
+      const isFullHp = player.hp >= player.maxHp;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, FRUIT_RADIUS * 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = isFullHp ? `rgba(255, 100, 100, 0.35)` : `rgba(150, 255, 150, 0.3)`;
+      ctx.fill();
+      if (fruitImgLoaded) {
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(fruitImg, screen.x - FRUIT_RADIUS, screen.y - FRUIT_RADIUS, FRUIT_RADIUS * 2, FRUIT_RADIUS * 2);
+        ctx.globalAlpha = 1.0;
+      } else {
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, FRUIT_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = '#a5ae5a';
+        ctx.fill();
+        ctx.strokeStyle = '#2c2c1e';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      // 满血时水果上方显示提示文字
+      if (isFullHp) {
+        ctx.font = 'bold 11px "Courier New", monospace';
+        ctx.fillStyle = '#ff9999';
+        ctx.textAlign = 'center';
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 3;
+        ctx.strokeText('+5 最大生命', screen.x, screen.y - FRUIT_RADIUS - 6);
+        ctx.fillText('+5 最大生命', screen.x, screen.y - FRUIT_RADIUS - 6);
+      }
+    }
+
+    for (let b of bullets) {
+      if (!isVisible(b.x, b.y, CULL_MARGIN)) continue;
+      const screen = worldToScreen(b.x, b.y);
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, BULLET_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffe066';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, BULLET_RADIUS * 0.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff9c4';
+      ctx.fill();
+    }
+
+    drawBossWarnings();
+    drawBosses();
+
+    const drawSize = PLAYER_RADIUS * 2.2;
+    const drawX = playerScreenX - drawSize / 2;
+    const drawY = playerScreenY - drawSize / 2;
+    if (playerImgLoaded) {
+      if (player.invincible > 0 && Math.floor(player.invincible * 12) % 2 === 0) ctx.globalAlpha = 0.5;
+      else ctx.globalAlpha = 1.0;
+      ctx.drawImage(playerImg, drawX, drawY, drawSize, drawSize);
+      ctx.globalAlpha = 1.0;
+    } else {
+      ctx.beginPath();
+      ctx.arc(playerScreenX, playerScreenY, PLAYER_RADIUS, 0, Math.PI * 2);
+      if (player.invincible > 0 && Math.floor(player.invincible * 12) % 2 === 0) ctx.fillStyle = '#ffe0b0';
+      else ctx.fillStyle = '#f4d29c';
+      ctx.fill();
+      ctx.strokeStyle = '#b38b5b';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    const hbw = PLAYER_RADIUS * 2.6, hbh = 6;
+    const hbx = playerScreenX - hbw / 2;
+    const hby = playerScreenY - PLAYER_RADIUS - 16;
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(hbx - 1, hby - 1, hbw + 2, hbh + 2);
+    const playerHpRatio = Math.max(0, player.hp / player.maxHp);
+    let playerHpColor;
+    if (playerHpRatio > 0.6) playerHpColor = '#4caf50';
+    else if (playerHpRatio > 0.3) playerHpColor = '#ff9800';
+    else playerHpColor = '#e63946';
+    ctx.fillStyle = playerHpColor;
+    ctx.fillRect(hbx, hby, hbw * playerHpRatio, hbh);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillRect(hbx, hby, hbw * playerHpRatio, 2);
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(hbx, hby, hbw, hbh);
+
+    const gunLength = PLAYER_RADIUS + 10;
+    const gunScreenX = playerScreenX + Math.cos(aimAngle) * gunLength;
+    const gunScreenY = playerScreenY + Math.sin(aimAngle) * gunLength;
+    ctx.beginPath();
+    ctx.moveTo(playerScreenX + Math.cos(aimAngle) * PLAYER_RADIUS * 0.8, playerScreenY + Math.sin(aimAngle) * PLAYER_RADIUS * 0.8);
+    ctx.lineTo(gunScreenX, gunScreenY);
+    ctx.strokeStyle = '#f0e68caa';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    if (levelUpFlash > 0) {
+      const alpha = levelUpFlash / 0.5;
+      ctx.beginPath();
+      ctx.arc(playerScreenX, playerScreenY, PLAYER_RADIUS * (2 + (1 - alpha) * 4), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 215, 0, ${alpha * 0.8})`;
+      ctx.lineWidth = 5 * alpha;
+      ctx.stroke();
+      ctx.font = 'bold 30px "Courier New", monospace';
+      ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.fillText('LEVEL UP!', playerScreenX, playerScreenY - 60 - (1 - alpha) * 30);
+    }
+
+    if (fruitPickupFlash > 0) {
+      const alpha = fruitPickupFlash / 0.7;
+      ctx.beginPath();
+      ctx.arc(playerScreenX, playerScreenY, PLAYER_RADIUS * (2 + (1 - alpha) * 3), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(150, 255, 150, ${alpha * 0.9})`;
+      ctx.lineWidth = 6 * alpha;
+      ctx.stroke();
+      ctx.font = 'bold 24px "Courier New", monospace';
+      ctx.fillStyle = fruitPickupColor;
+      ctx.globalAlpha = alpha;
+      ctx.textAlign = 'center';
+      ctx.fillText(fruitPickupText, playerScreenX, playerScreenY - 90 - (1 - alpha) * 20);
+      ctx.globalAlpha = 1.0;
+    }
+
+    if (bossDefeatFlash > 0) {
+      const alpha = bossDefeatFlash / 1.5;
+      ctx.font = 'bold 40px "Courier New", monospace';
+      ctx.fillStyle = `rgba(255, 200, 100, ${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.fillText('BOSS 已击败!', playerScreenX, playerScreenY - 120);
+    }
+
+    if (treeRewardFlash > 0) {
+      const alpha = treeRewardFlash;
+      ctx.font = 'bold 28px "Courier New", monospace';
+      ctx.fillStyle = `rgba(100, 255, 100, ${alpha})`;
+      ctx.textAlign = 'center';
+      ctx.fillText('🌳 树掉落了水果!', playerScreenX, playerScreenY - 150);
+    }
+
+    if (debuffFlash > 0) {
+      const alpha = Math.min(1, debuffFlash / 1.2);
+      ctx.font = 'bold 36px "Courier New", monospace';
+      ctx.fillStyle = `rgba(255, 80, 80, ${alpha})`;
+      ctx.textAlign = 'center';
+      const debuff = BOSS_DEBUFF_BASE + (bossDebuffCount - 1) * BOSS_DEBUFF_STEP;
+      const clamped = Math.min(BOSS_DEBUFF_MAX, debuff);
+      ctx.fillText('⚠ 伤害被压制 ' + Math.round(clamped * 100) + '%', playerScreenX, playerScreenY - 150);
+    }
+
+    if (gameOver) {
+      ctx.fillStyle = '#000000aa';
+      ctx.fillRect(0, 0, W, H);
+      ctx.font = 'bold 60px "Courier New", monospace';
+      ctx.fillStyle = '#f2e8cf';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', W / 2, H / 2 - 30);
+      ctx.font = '30px "Courier New", monospace';
+      ctx.fillText('点击 "重开一局"', W / 2, H / 2 + 60);
+    }
+  }
+
+  const keys = { arrowup: false, arrowdown: false, arrowleft: false, arrowright: false };
+  const codeMap = { 'ArrowUp': 'arrowup', 'ArrowDown': 'arrowdown', 'ArrowLeft': 'arrowleft', 'ArrowRight': 'arrowright' };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      autoMode = !autoMode;
+      updateAutoUI();
+      return;
+    }
+
+    let mk = null;
+    if (e.code in codeMap) mk = codeMap[e.code];
+    else { const kl = e.key.toLowerCase(); if (kl in keys) mk = kl; }
+    if (mk) { keys[mk] = true; e.preventDefault(); e.stopPropagation(); return false; }
+  }, { passive: false });
+
+  window.addEventListener('keyup', (e) => {
+    let mk = null;
+    if (e.code in codeMap) mk = codeMap[e.code];
+    else { const kl = e.key.toLowerCase(); if (kl in keys) mk = kl; }
+    if (mk) { keys[mk] = false; e.preventDefault(); e.stopPropagation(); return false; }
+  }, { passive: false });
+
+  window.addEventListener('blur', () => { for (let k in keys) keys[k] = false; });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) for (let k in keys) keys[k] = false; });
+  document.getElementById('restartButton').addEventListener('click', () => { resetGame(); });
+
+  resetGame();
+  updateAutoUI();
+
+  let lastTimestamp = 0;
+  const MAX_DELTA = 0.1;
+
+  function gameLoop(timestamp) {
+    if (!lastTimestamp) { lastTimestamp = timestamp; requestAnimationFrame(gameLoop); return; }
+    let dt = (timestamp - lastTimestamp) / 1000;
+    if (dt > MAX_DELTA) dt = MAX_DELTA;
+    lastTimestamp = timestamp;
+    update(dt);
+    draw();
+    requestAnimationFrame(gameLoop);
+  }
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
